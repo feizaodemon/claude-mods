@@ -33,7 +33,7 @@ export function clock(ms: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`
 }
 
-export function kTokens(n: number): string {
+export function kCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
   return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n)
 }
@@ -160,8 +160,8 @@ export function chips(last: LastStep | null, now: number, ttl: number, usage: Se
     const f = forecast(warnAt ? forecastPercent(context.tokens, warnAt) : context.percent)
     out.push({
       key: 'context', rank: 1, color: f.color,
-      text: `${f.icon} ${f.word} 上下文 ${context.percent}% ${kTokens(context.tokens)}/${kTokens(context.window)}`,
-      short: `${f.icon} ${kTokens(context.tokens)}`,
+      text: `${f.icon} ${f.word} 上下文 ${context.percent}% ${kCount(context.tokens)}/${kCount(context.window)}`,
+      short: `${f.icon} ${kCount(context.tokens)}`,
     })
   }
   out.push(cacheChip(last, now, ttl))
@@ -178,7 +178,7 @@ export function chips(last: LastStep | null, now: number, ttl: number, usage: Se
   }
   // Turns until the context warning, in place of a sparkline that took reading.
   const left = turnsLeft(history, warnAt)
-  if (left !== undefined && warnAt !== undefined) out.push({ key: 'turns', text: `约 ${left} 轮到 ${kTokens(warnAt)}`, short: `${left}轮`, color: left <= 3 ? 'yellow' : undefined, dim: left > 3, rank: 5 })
+  if (left !== undefined && warnAt !== undefined) out.push({ key: 'turns', text: `约 ${left} 轮到 ${kCount(warnAt)}`, short: `${left}轮`, color: left <= 3 ? 'yellow' : undefined, dim: left > 3, rank: 5 })
   // The hit rate needs no action while the cache works; it shows only when it looks broken.
   if (last?.hitPercent != null && last.hitPercent < 70) out.push({ key: 'hit', text: `命中 ${last.hitPercent}% 缓存可能失效`, short: `命中${last.hitPercent}%`, color: 'yellow', rank: 4 })
   // A subscription's figure in API prices: informative, never a reason to act, so last to go.

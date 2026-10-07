@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
-import { cacheDetail, cells, chips, clock, exhaustsAt, forecastPercent, hitPercent, kTokens, layout, line, recentRate, ttlFor, turnsLeft, warnTokens } from '../hooks/format'
+import { cacheDetail, cells, chips, clock, exhaustsAt, forecastPercent, hitPercent, kCount, layout, line, recentRate, ttlFor, turnsLeft, warnTokens } from '../hooks/format'
 
 const USAGE = { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 900, cache_creation_input_tokens: 0, model: 'm' }
 
@@ -61,9 +61,9 @@ describe('session-meter', () => {
     expect(clock(3_600_000)).toBe('1:00:00')
     expect(clock(59_001)).toBe('1:00')
     expect(hitPercent(USAGE)).toBe(90)
-    expect(kTokens(950)).toBe('950')
-    expect(kTokens(21_400)).toBe('21k')
-    expect(kTokens(1_000_000)).toBe('1M')
+    expect(kCount(950)).toBe('950')
+    expect(kCount(21_400)).toBe('21k')
+    expect(kCount(1_000_000)).toBe('1M')
     expect(hitPercent({ ...USAGE, input_tokens: 0, cache_read_input_tokens: 0 })).toBeNull()
     const usage = { startedAt: 0, rateLimits: [], context: { window: 200_000 } } as any
     expect(line(null, 0, 3_600_000, usage)).toBe('❄ 缓存 –')

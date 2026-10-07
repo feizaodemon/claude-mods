@@ -10,7 +10,7 @@ import type { View } from '../types'
 import type { Memo, Snapshot } from './alerts'
 import { EMPTY_MEMO, decideToasts } from './alerts'
 import type { Judge, Sample } from './format'
-import { SEP, WARN_MS, WINDOW_LABEL, cacheDetail, chips, exhaustsAt, hhmm, hhmmAt, hitPercent, kTokens, layout, recentRate, ttlFor, ttlMs, warnTokens } from './format'
+import { SEP, WARN_MS, WINDOW_LABEL, cacheDetail, chips, exhaustsAt, hhmm, hhmmAt, hitPercent, kCount, layout, recentRate, ttlFor, ttlMs, warnTokens } from './format'
 import type { Standup } from './standup'
 import { IDLE_RESET_MS, advice, done, duration, figure, lateNight, nudgeKey, onActivity, parse, phase, snooze, standupChip } from './standup'
 
@@ -278,9 +278,9 @@ export const register: Register = (on, options) => {
     const out: string[] = [chips(step, now, ttl, usage, (await $.state.get(READINGS)).value ?? [], j).map(c => c.text).join(SEP), '']
     out.push(cacheDetail(step, now))
     const warnAt = warnTokens(context.window, cfg.ctxWarn, cfg.ctxWarnTokens)
-    out.push(`上下文：${context.tokens !== undefined ? kTokens(context.tokens) : '–'} / ${kTokens(context.window)}（${context.percent ?? '–'}%）${warnAt ? `，${kTokens(warnAt)} 时提醒` : ''}`)
+    out.push(`上下文：${context.tokens !== undefined ? kCount(context.tokens) : '–'} / ${kCount(context.window)}（${context.percent ?? '–'}%）${warnAt ? `，${kCount(warnAt)} 时提醒` : ''}`)
     for (const c of context.breakdown?.categories ?? []) {
-      if (c.tokens > 0) out.push(`  ${c.name}: ${kTokens(c.tokens)}${c.isDeferred ? '（按需加载）' : ''}`)
+      if (c.tokens > 0) out.push(`  ${c.name}: ${kCount(c.tokens)}${c.isDeferred ? '（按需加载）' : ''}`)
     }
     for (const r of rateLimits) {
       const runsOut = exhaustsAt(r, now, j.rates?.[r.kind])

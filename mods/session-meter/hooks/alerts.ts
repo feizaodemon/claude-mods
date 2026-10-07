@@ -1,6 +1,6 @@
 // Every toast the meter sends, decided in one place from one snapshot, so the rules (once each,
 // never mid-turn for the person, never to an empty desk for the cache) are written once and tested.
-import { clock, kTokens } from './format'
+import { clock, kCount } from './format'
 
 export const CHEAP_REWRITE = 20_000 // context tokens under which a cache rewrite is not worth a toast
 
@@ -33,7 +33,7 @@ export function decideToasts(s: Snapshot, m: Memo): { toasts: string[]; memo: Me
   const tokens = s.context.tokens ?? 0
   if (s.cache && s.cache.at !== m.cacheFor && tokens >= CHEAP_REWRITE && !s.away && s.cache.left > 0 && s.cache.left <= s.cache.warnMs) {
     memo.cacheFor = s.cache.at
-    toasts.push(`提示缓存还剩 ${clock(s.cache.left)} 过期：现在发下一条消息，否则要重新写入约 ${kTokens(tokens)} token`)
+    toasts.push(`提示缓存还剩 ${clock(s.cache.left)} 过期：现在发下一条消息，否则要重新写入约 ${kCount(tokens)} token`)
   }
 
   // The context: at the warning size, and again at twice it; each again after it drops well below.
@@ -42,11 +42,11 @@ export function decideToasts(s: Snapshot, m: Memo): { toasts: string[]; memo: Me
     const t = s.context.tokens
     if (!m.ctx && t >= warnAt) {
       memo.ctx = true
-      toasts.push(`上下文已到 ${kTokens(t)}（${s.context.percent ?? '–'}%）：找个合适的节点手动 /compact`)
+      toasts.push(`上下文已到 ${kCount(t)}（${s.context.percent ?? '–'}%）：找个合适的节点手动 /compact`)
     } else if (m.ctx && t < warnAt * 0.85) memo.ctx = false
     if (!m.ctxStrong && t >= warnAt * 2 && warnAt * 2 <= window) {
       memo.ctxStrong = true
-      toasts.push(`上下文已到 ${kTokens(t)}：每轮都在重读这么多，建议现在 /compact，或写交接后 /clear`)
+      toasts.push(`上下文已到 ${kCount(t)}：每轮都在重读这么多，建议现在 /compact，或写交接后 /clear`)
     } else if (m.ctxStrong && t < warnAt * 1.7) memo.ctxStrong = false
   }
 

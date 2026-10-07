@@ -1,10 +1,9 @@
 {
   "name": "session-meter",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "icon": "./.claude-plugin/icon.png",
   "author": { "name": "Xiaowei Rong" },
   "license": "MIT",
-  "repository": "https://github.com/feizaodemon/claude-mods",
   "description": "A band above the prompt: context forecast and turns left, prompt cache countdown, rate limits with their pace, a cache hit warning, cost, and stand-up / late-night reminders, fitted to the width. /meter shows the details.",
   "types": "./types/index.d.ts",
   "userConfig": {
