@@ -1,0 +1,50 @@
+{
+  "name": "session-meter",
+  "version": "0.6.0",
+  "author": { "name": "Xiaowei Rong" },
+  "license": "MIT",
+  "repository": "https://github.com/feizaodemon/claude-mods",
+  "description": "A band above the prompt: context forecast and turns left, prompt cache countdown, rate limits with their pace, a cache hit warning, cost, and stand-up / late-night reminders, fitted to the width. /meter shows the details.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "cacheTtl": {
+      "type": "string",
+      "title": "Prompt cache TTL",
+      "description": "How long the prompt cache lives after the last main-thread response. auto: CLAUDE_CODE_PROMPT_CACHE_TTL if set, else 5m once a rate-limit window is spent (overage), else 1h.",
+      "options": ["auto", "1h", "5m"],
+      "default": "auto"
+    },
+    "contextWarnPercent": {
+      "type": "number",
+      "title": "Context warning (%)",
+      "description": "Warn when the context fills past this share of the window (or contextWarnTokens, whichever comes first). 0 turns the share off.",
+      "default": 80,
+      "min": 0,
+      "max": 100
+    },
+    "contextWarnTokens": {
+      "type": "number",
+      "title": "Context warning (tokens)",
+      "description": "Warn at this many context tokens, again at twice it; turns left count toward it. Matters on 1M windows, where 80% comes far too late. 0 turns it off.",
+      "default": 200000,
+      "min": 0,
+      "max": 1000000
+    },
+    "standupMinutes": {
+      "type": "number",
+      "title": "Stand-up reminder (minutes)",
+      "description": "Remind you to get up after sitting this long; 10 minutes without a prompt counts as a break. 0 turns it off.",
+      "default": 60,
+      "min": 0,
+      "max": 240
+    },
+    "bedtimeHour": {
+      "type": "number",
+      "title": "Late-night reminder (hour)",
+      "description": "Toast once a night from this local hour until 5 am to wrap up. 0 turns it off.",
+      "default": 23,
+      "min": 0,
+      "max": 23
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "feizao-mods",
+  "owner": {
+    "name": "Xiaowei Rong"
+  },
+  "metadata": {
+    "description": "Claude Code mods built as function-hook plugins."
+  },
+  "plugins": [
+    {
+      "name": "session-meter",
+      "source": "./mods/session-meter",
+      "description": "A band above the prompt: context forecast and turns left, prompt cache countdown, rate limits with their pace, a cache hit warning, cost, and stand-up / late-night reminders. /meter shows the details."
+    }
+  ]
+}
