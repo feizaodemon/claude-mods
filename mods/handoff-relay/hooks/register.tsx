@@ -3,18 +3,16 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Offer } from '../types'
 import type { Candidate } from './core'
-import { ASKS_FOR_IT, DIR_NAME, MAX_AGE_MS, MIN_TURNS, autoName, fileText, headline, mechanical, parseFile, pick, redact, samePath, wrapPrompt } from './core'
+import { ASKS_FOR_IT, DIR_NAME, MAX_AGE_MS, MIN_TURNS, autoName, headline, parseFile, pick, samePath, wrapPrompt } from './core'
 
-// One relay for every handoff of a folder: the handoff the model writes when the
-// first /clear is held (as clear-guard did), the mechanical one this mod saves on
-// /clear or exit when there is none, the file the /handoff skill writes to the
-// same temp folder, and the repo's own HANDOFF.md. The newest one not yet
+// One relay for every handoff of a folder: the one Claude writes when the first
+// /clear of a working conversation is held, the file the /handoff skill writes to
+// the same temp folder, and the repo's own HANDOFF.md. The newest one not yet
 // dismissed is offered above the prompt and goes with the next prompt on Load
 // (or when the prompt asks to continue).
 
 const offer = atom({ plugin: 'handoff-relay', key: 'offer' } as const, null)
 const willAttach = atom({ plugin: 'handoff-relay', key: 'willAttach' } as const, false)
-const startedAt = atom({ plugin: 'handoff-relay', key: 'startedAt' } as const, 0)
 
 const SEEN_KEY = 'seen'
 const SEEN_MAX = 50
@@ -95,7 +93,7 @@ async function refreshOffer($: EngineInterface): Promise<void> {
   await update($, offer, () => (best ? { path: best.path, mtimeMs: best.mtimeMs, source: best.source, headline: headline(best.body) } : null))
 }
 
-const LABEL: Record<Offer['source'], string> = { auto: '自动交接', skill: '/handoff 交接', repo: 'HANDOFF.md' }
+const LABEL: Record<Offer['source'], string> = { auto: '收尾交接', skill: '/handoff 交接', repo: 'HANDOFF.md' }
 
 /** The offered file as context for the model, or undefined when it is gone. */
 async function contextOf($: EngineInterface, o: Offer): Promise<string | undefined> {
@@ -108,21 +106,6 @@ async function consume($: EngineInterface, o: Offer): Promise<void> {
   await markSeen($, o)
   await update($, offer, () => null)
   await update($, willAttach, () => false)
-}
-
-/** Writes the mechanical auto handoff, unless this session already left one (the model's, say). */
-async function save($: EngineInterface): Promise<boolean> {
-  const cwd = await $.session.cwd()
-  const now = await $.clock.now()
-  const since = await read($, startedAt)
-  if ((await tempCandidates($, cwd, now)).some(c => c.mtimeMs >= since)) return false
-
-  const messages = await $.session.messages()
-  if (!Array.isArray(messages) || messages.length < 2) return false
-  const branch = await git($, ['rev-parse', '--abbrev-ref', 'HEAD'])
-  const body = redact(mechanical(messages, branch))
-  await $.fs.write(`${await handoffDir($)}/${autoName(cwd, now)}`, fileText(cwd, 'auto', new Date(now).toISOString(), body))
-  return true
 }
 
 export const register: Register = on => {
@@ -147,8 +130,6 @@ export const register: Register = on => {
   })
 
   on('session.start', async ($, e, next) => {
-    const at = await $.clock.now()
-    await update($, startedAt, () => at)
     // The desktop app does not route a mod's commands; the terminal does. A
     // refusal (a skill of the same name) must not cost the offer below.
     await $.command
@@ -158,19 +139,9 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // After /clear the process goes on as a new conversation: offer the handoff Claude just wrote.
   on('session.end', async ($, e, next) => {
-    if (e.reason !== 'clear' && e.reason !== 'prompt_input_exit') return next(e)
-    // The whole session.end chain shares one ~1.5 s bound: no model call here,
-    // only the mechanical fallback when the model wrote no handoff.
-    const isSaved = await save($).catch(err => {
-      $.ui.log(`handoff-relay: save failed: ${String(err)}`, { to: 'debug' })
-      return false
-    })
-    // After /clear the process goes on: this is a new session from here.
-    const at = await $.clock.now()
-    await update($, startedAt, () => at)
-    await refreshOffer($).catch(() => undefined)
-    if (isSaved) $.ui.toast('交接已保存，下次提问时可载入')
+    if (e.reason === 'clear') await refreshOffer($).catch(() => undefined)
     return next(e)
   })
 

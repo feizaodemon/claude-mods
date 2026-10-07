@@ -1,7 +1,7 @@
 import type { Register } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { ASKS_FOR_IT, headline, parseFile, pick, redact, samePath } from '../hooks/core'
+import { ASKS_FOR_IT, headline, parseFile, pick, samePath } from '../hooks/core'
 
 type On = Parameters<Register>[0]
 const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
@@ -40,7 +40,7 @@ function world(on: On, disk: Map<string, { text: string; mtimeMs: number }>) {
   return clk
 }
 
-test('/clear saves a redacted handoff and a 继续 prompt gets it as context', async ($, on) => {
+test('/clear writes nothing itself; the handoff Claude wrote is offered and goes with a 继续 prompt', async ($, on) => {
   const disk = new Map<string, { text: string; mtimeMs: number }>()
   world(on, disk)
   let seen: readonly string[] = []
@@ -48,29 +48,24 @@ test('/clear saves a redacted handoff and a 继续 prompt gets it as context', a
     seen = e.context ?? []
     return { text: e.text, context: e.context }
   })
-
   await $.session.start({ cwd: 'C:\\repo', surface: null, isInteractive: true })
+  // What the held /clear's turn wrote, before the second /clear.
+  disk.set(`${DIR}/repo-1000000.md`, { text: '---\ncwd: C:\\repo\nsource: auto\n---\n\n## 目标\n下一步：合并 PR #642', mtimeMs: 1_000_000 })
   await $.session.end({ reason: 'clear', sessionId: 's1', resume: { sessionId: 's1' } } as never)
-  const saved = [...disk.values()][0]?.text ?? ''
-  expect(saved).toContain('cwd: C:\\repo')
-  expect(saved).toContain('合并 PR #642')
-  expect(saved).not.toContain('ghp_abcdefghij')
-
+  expect(disk.size).toBe(1)
   await $.prompt.submit({ text: '继续上次的工作', origin: { kind: 'composer' }, wait: false })
   const text = seen.join('\n')
-  expect(text).toContain('[handoff-relay]')
+  expect(text).toContain('[handoff-relay] 上一个会话的收尾交接')
   expect(text).toContain('合并 PR #642')
 })
 
-test('a /handoff skill file from this session stops the auto save', async ($, on) => {
+test('exiting without a handoff saves nothing', async ($, on) => {
   const disk = new Map<string, { text: string; mtimeMs: number }>()
   world(on, disk)
   await $.session.start({ cwd: 'C:\\repo', surface: null, isInteractive: true })
-  disk.set(`${DIR}/repo-skill.md`, { text: '---\ncwd: c:/repo/\nsource: skill\n---\n\n# 交接\n下一步：部署', mtimeMs: 9_000_000 })
-  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { sessionId: 's1' } } as never)
-  expect(disk.size).toBe(1)
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: 's1' } as never)
+  expect(disk.size).toBe(0)
 })
-
 /** A working conversation of `turns` turns: /clear runs count in `cleared`, prompts in `submitted`. */
 function clearWorld(on: On, turns: number) {
   const seen = { turns, cleared: 0, submitted: [] as string[] }
@@ -139,8 +134,6 @@ test('a short conversation clears at once', async ($, on) => {
 })
 
 test('helpers', () => {
-  expect(redact('Authorization: Bearer abcdefghijklmnopqrstu')).toBe('Authorization: Bearer [REDACTED]')
-  expect(redact('密码: hunter2 and sk-ant-abcdefghijklmnopqrst')).toBe('密码: [REDACTED] and [REDACTED]')
   expect(headline('# 交接\n\n下一步：部署')).toBe('下一步：部署')
   expect(headline('## 目标\nStage B 真人试采\n## 已完成')).toBe('Stage B 真人试采')
   expect(samePath('C:\\Repo\\', 'c:/repo')).toBe(true)

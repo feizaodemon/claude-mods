@@ -73,10 +73,9 @@ Layout: `hooks/format.ts` (the band's figures), `hooks/alerts.ts` (every toast r
 Built around one person's workflow; it works best alongside a `/handoff` skill that writes to the same folder.
 
 - The first `/clear` of a working conversation (3+ turns) is held: Claude wraps up and writes a handoff to `$TEMP/claude-handoff/`. A second `/clear` straight away goes through.
-- On exit without one, it saves a mechanical handoff (recent asks, last answer, branch) with secrets masked.
-- In the next session in that folder, the newest handoff (its own, the `/handoff` skill's, or the repo's `HANDOFF.md`) is offered above the prompt: Load (1) or Dismiss (2), or ask to continue in your prompt.
+- In the next session in that folder, the newest handoff (Claude's, the `/handoff` skill's, or the repo's `HANDOFF.md`) is offered above the prompt: Load (1) or Dismiss (2), or ask to continue in your prompt.
 
-Note: it intercepts `/clear`, submits a prompt on your behalf, and keeps conversation excerpts on disk for three days.
+Note: it intercepts `/clear` and submits a prompt on your behalf. Handoffs older than three days are no longer offered.
 
 ```bash
 claude plugin install handoff-relay@feizao-mods

@@ -1,6 +1,6 @@
 {
   "name": "handoff-relay",
-  "version": "0.2.4",
-  "description": "Holds the first /clear of a working conversation so Claude writes a handoff first; saves a mechanical one on exit; offers the newest handoff for this folder (auto, /handoff skill, or HANDOFF.md) on your next prompt",
+  "version": "0.3.0",
+  "description": "Holds the first /clear of a working conversation so Claude writes a handoff first, then offers the newest handoff for this folder (Claude's, the /handoff skill's, or HANDOFF.md) on your next prompt",
   "types": "./types/index.d.ts"
 }

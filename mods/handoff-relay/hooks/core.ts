@@ -30,28 +30,6 @@ export function wrapPrompt(path: string, cwd: string, savedAt: string): string {
   ].join('\n')
 }
 
-const SECRETS: readonly RegExp[] = [
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-  /\b(sk|pk|rk)-(ant-|proj-|live-|test-)?[A-Za-z0-9_-]{16,}/g,
-  /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
-  /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
-  /\bxox[abprs]-[A-Za-z0-9-]{10,}/g,
-  /\bAKIA[0-9A-Z]{16}\b/g,
-  /\bAIza[0-9A-Za-z_-]{30,}/g,
-  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
-]
-// These keep their label (group 1) and mask only the value.
-const LABELLED: readonly RegExp[] = [
-  /(Bearer\s+)[A-Za-z0-9._~+/-]{16,}=*/gi,
-  /((?:password|passwd|pwd|secret|token|api[_-]?key|密码)\s*[:=：]\s*)\S+/gi,
-]
-
-/** Masks the secrets a handoff must never carry. */
-export function redact(text: string): string {
-  const bare = SECRETS.reduce((out, re) => out.replace(re, '[REDACTED]'), text)
-  return LABELLED.reduce((out, re) => out.replace(re, '$1[REDACTED]'), bare)
-}
-
 /** Paths compare without case and with one kind of slash, the way Windows treats them. */
 export function samePath(a: string, b: string): boolean {
   const norm = (p: string) => p.replace(/[\\/]+/g, '/').replace(/\/$/, '').toLowerCase()
@@ -73,11 +51,7 @@ export function parseFile(text: string): Meta {
   return meta
 }
 
-export function fileText(cwd: string, source: string, savedAt: string, body: string): string {
-  return `---\ncwd: ${cwd}\nsource: ${source}\nsaved: ${savedAt}\n---\n\n${body.trim()}\n`
-}
-
-/** A file name for an auto save: the folder's last part plus the time, safe on every OS. */
+/** A file name for a held /clear's handoff: the folder's last part plus the time, safe on every OS. */
 export function autoName(cwd: string, now: number): string {
   const leaf = cwd.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || 'root'
   return `${leaf.replace(/[^\w.-]+/g, '_').slice(0, 40)}-${now}.md`
@@ -97,27 +71,4 @@ export function pick(candidates: readonly Candidate[], seen: readonly string[]):
   return [...candidates]
     .filter(c => !seen.includes(`${c.path}|${c.mtimeMs}`))
     .sort((a, b) => b.mtimeMs - a.mtimeMs)[0]
-}
-
-export type Message = { role: string; text?: string }
-
-/** The mechanical part of an auto handoff, built from the transcript alone. */
-export function mechanical(messages: readonly Message[], branch: string): string {
-  const recent = messages.slice(-60)
-  const all = recent.map(m => m.text ?? '').join('\n')
-  const lastAnswer = [...recent].reverse().find(m => m.role === 'assistant' && (m.text ?? '').trim() !== '')?.text ?? ''
-  const asks = recent
-    .filter(m => m.role === 'user' && (m.text ?? '').trim() !== '' && !(m.text ?? '').startsWith('<'))
-    .map(m => (m.text ?? '').trim().replace(/\s+/g, ' ').slice(0, 200))
-    .slice(-6)
-  const links = [...new Set(all.match(/https:\/\/claude\.ai\/(code\/)?artifact\/[\w-]+/g) ?? [])].slice(-5)
-  const prs = [...new Set((all.match(/\/pull\/\d+|\bPR\s*#\d{1,5}\b/g) ?? []).map(p => `#${p.replace(/\D/g, '')}`))].slice(-10)
-
-  const parts: string[] = []
-  if (branch) parts.push(`分支：${branch}`)
-  if (prs.length) parts.push(`提到的 PR：${prs.join(', ')}`)
-  if (links.length) parts.push(`Artifacts：${links.join(' ')}`)
-  if (asks.length) parts.push(`## 最近的提问\n${asks.map(a => `- ${a}`).join('\n')}`)
-  if (lastAnswer) parts.push(`## 最后一条回答\n${lastAnswer.slice(0, 4000)}`)
-  return parts.join('\n\n')
 }
