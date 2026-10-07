@@ -1,6 +1,7 @@
 {
   "name": "session-meter",
-  "version": "0.6.0",
+  "version": "0.6.1",
+  "icon": "./.claude-plugin/icon.png",
   "author": { "name": "Xiaowei Rong" },
   "license": "MIT",
   "repository": "https://github.com/feizaodemon/claude-mods",
@@ -10,8 +11,7 @@
     "cacheTtl": {
       "type": "string",
       "title": "Prompt cache TTL",
-      "description": "How long the prompt cache lives after the last main-thread response. auto: CLAUDE_CODE_PROMPT_CACHE_TTL if set, else 5m once a rate-limit window is spent (overage), else 1h.",
-      "options": ["auto", "1h", "5m"],
+      "description": "auto, 1h or 5m: how long the prompt cache lives after the last main-thread response. auto: CLAUDE_CODE_PROMPT_CACHE_TTL if set, else 5m once a rate-limit window is spent (overage), else 1h. Anything else counts as auto.",
       "default": "auto"
     },
     "contextWarnPercent": {

@@ -229,12 +229,6 @@ describe('session-meter', () => {
     expect(await lastStatus($)).toContain('❄ 缓存 5:00')
   })
 
-  test('promptCacheTtl in settings.json sets the countdown', async ($, on) => {
-    const { seen, reading } = await start($, on)
-    reading.settings = { promptCacheTtl: '5m' }
-    await request($, 0)
-    expect(await lastStatus($)).toContain('❄ 缓存 5:00')
-  })
 
   test('a narrow band keeps the context and the cache, in at most two rows', () => {
     const usage = { startedAt: 0, rateLimits: [{ kind: 'five_hour', percentUsed: 31 }, { kind: 'seven_day', percentUsed: 92 }], context: { tokens: 92_000, window: 200_000, percent: 46 }, cost: { usd: 4.2 } } as any

@@ -4,10 +4,9 @@
 //
 // Once a second the tick reads the engine, works out what the band shows (a View in $.state, which
 // redraws its readers when it changes) and which toasts are due (alerts.ts). Drawing only reads.
-import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionUsage } from 'claude-code'
 
-import type { LastStep, Reading, View } from '../types'
+import type { View } from '../types'
 import type { Memo, Snapshot } from './alerts'
 import { EMPTY_MEMO, decideToasts } from './alerts'
 import type { Judge, Sample } from './format'
@@ -23,9 +22,10 @@ const SAMPLE_EVERY_MS = 60_000 // how often a rate-limit reading is kept for the
 const RUNNING_MAX_MS = 30 * 60_000 // a turn that never reported its end stops counting as running
 const FAILING_AFTER = 3 // ticks failed in a row before the band says its figures may be stale
 
-const last = atom({ plugin: 'session-meter', key: 'last' } as const, null as LastStep | null)
-const readings = atom({ plugin: 'session-meter', key: 'readings' } as const, [] as Reading[])
-const view = atom({ plugin: 'session-meter', key: 'view' } as const, null as View | null)
+// This mod's values in $.state, each read and written with $.state.get / $.state.set.
+const LAST = { plugin: 'session-meter', key: 'last' } as const
+const READINGS = { plugin: 'session-meter', key: 'readings' } as const
+const VIEW = { plugin: 'session-meter', key: 'view' } as const
 
 // The options; set again on each (re)load.
 const cfg = { ttlOption: 'auto' as unknown, ctxWarn: 80, ctxWarnTokens: 200_000, standupMs: 60 * 60_000, bedtimeHour: 23 }
@@ -84,7 +84,7 @@ async function saveStandup($: EngineInterface, s: Standup) {
 // One second of the meter: the View the band draws, and the toasts now due.
 async function tick($: EngineInterface) {
   const now = await $.clock.now()
-  const step = await read($, last)
+  const step = (await $.state.get(LAST)).value ?? null
   const usage = await $.session.usage()
   const ttl = step?.ttl ?? ttlMs('1h')
   sample(now, usage)
@@ -96,13 +96,13 @@ async function tick($: EngineInterface) {
   const isDue = p?.phase === 'due'
 
   const next: View = {
-    chips: [...chips(step, now, ttl, usage, await read($, readings), j), ...(upChip ? [upChip] : [])],
+    chips: [...chips(step, now, ttl, usage, (await $.state.get(READINGS)).value ?? [], j), ...(upChip ? [upChip] : [])],
     ...(isDue && p ? { standup: { tips: advice(s, p.sat, now), frame: Math.floor(now / 1000) % 2 } } : {}),
   }
   const key = JSON.stringify(next)
   if (key !== mem.viewKey) {
     mem.viewKey = key
-    await update($, view, () => next)
+    await $.state.set(VIEW, next)
   }
 
   // The shared flags the toasts depend on: the sitting reminded, the night reminded.
@@ -138,13 +138,25 @@ async function tick($: EngineInterface) {
 async function refresh($: EngineInterface) {
   try {
     await tick($)
-    if (mem.failures >= FAILING_AFTER) await update($, view, v => (v ? { ...v, failing: false } : v))
+    if (mem.failures >= FAILING_AFTER) await setFailing($, false)
     mem.failures = 0
   } catch (error) {
     mem.failures += 1
     mem.lastError = error instanceof Error ? error.message : String(error)
-    if (mem.failures === FAILING_AFTER) await update($, view, v => (v ? { ...v, failing: true } : v)).catch(() => {})
+    if (mem.failures === FAILING_AFTER) await setFailing($, true).catch(() => {})
   }
+}
+
+async function setFailing($: EngineInterface, failing: boolean) {
+  const v = (await $.state.get(VIEW)).value
+  if (v) await $.state.set(VIEW, { ...v, failing })
+}
+
+// A press on the stand-up panel's buttons: done or snooze the shared clock, then redraw.
+async function pressStandup($: EngineInterface, change: (s: Standup, t: number) => Standup) {
+  const t = await $.clock.now()
+  await saveStandup($, change(await loadStandup($, t), t))
+  await refresh($)
 }
 
 const FAILING_CHIP = { key: 'failing', text: '⚠ meter 数据可能过期（/meter 看原因）', short: '⚠ meter', color: 'yellow', rank: 2 }
@@ -184,14 +196,12 @@ export const register: Register = (on, options) => {
       const at = await $.clock.now()
       const hit = hitPercent(result.usage)
       const { rateLimits } = await $.session.usage()
-      const settings = await $.settings.read().catch(() => ({}) as Record<string, unknown>)
       const { ttl, source } = ttlFor(cfg.ttlOption, {
         force5m: await $.env.get('FORCE_PROMPT_CACHING_5M').catch(() => undefined),
         env: await $.env.get('CLAUDE_CODE_PROMPT_CACHE_TTL').catch(() => undefined),
-        setting: settings.promptCacheTtl,
         enable1h: await $.env.get('ENABLE_PROMPT_CACHING_1H').catch(() => undefined),
       }, rateLimits)
-      await update($, last, () => ({ at, hitPercent: hit, ttl, ttlSource: source }))
+      await $.state.set(LAST, { at, hitPercent: hit, ttl, ttlSource: source })
       await refresh($)
     }
     return result
@@ -204,7 +214,8 @@ export const register: Register = (on, options) => {
       mem.runningSince = 0
       const { context } = await $.session.usage()
       if (context.tokens !== undefined) {
-        await update($, readings, h => [...h, { tokens: context.tokens ?? 0 }].slice(-HISTORY))
+        const held = (await $.state.get(READINGS)).value ?? []
+        await $.state.set(READINGS, [...held, { tokens: context.tokens }].slice(-HISTORY))
       }
       await refresh($)
     }
@@ -212,24 +223,19 @@ export const register: Register = (on, options) => {
   })
 
   on('session.end', async ($, e, next) => {
-    await update($, last, () => null) // /clear starts a fresh prefix
-    await update($, readings, () => [])
+    await $.state.set(LAST, null) // /clear starts a fresh prefix
+    await $.state.set(READINGS, [])
     mem.viewKey = ''
     return next(e)
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const rest = await next(e) // what other mods and Claude Code draw here stays
-    const v = await read($, view)
+    const v = (await $.state.get(VIEW)).value ?? null
     if (e.props.hasSurvey || !v) return rest
     const { Box, Text, Button } = $.ui.resolve(e)
     const all = v.failing ? [...v.chips, FAILING_CHIP] : v.chips
     const rows = layout(all, Math.max(10, e.props.bodyColumns - 2), Math.min(2, Math.max(1, e.props.maxRows)))
-    const press = (change: (s: Standup, t: number) => Standup) => async () => {
-      const t = await $.clock.now()
-      await saveStandup($, change(await loadStandup($, t), t))
-      await refresh($)
-    }
 
     return (
       <Box flexDirection="column">
@@ -245,8 +251,8 @@ export const register: Register = (on, options) => {
                 <Text key={`tip${i}`} color={i === 0 ? 'yellow' : undefined} bold={i === 0}>{t}</Text>
               ))}
               <Box flexDirection="row" columnGap={1}>
-                <Button key="moved" label="已活动" variant="primary" onPress={press(done)} />
-                <Button key="later" label="10 分钟后提醒" onPress={press(snooze)} />
+                <Button key="moved" label="已活动" variant="primary" onPress={() => pressStandup($, done)} />
+                <Button key="later" label="10 分钟后提醒" onPress={() => pressStandup($, snooze)} />
               </Box>
             </Box>
           </Box>
@@ -268,12 +274,12 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'meter' }, async $ => {
     const now = await $.clock.now()
-    const step = await read($, last)
+    const step = (await $.state.get(LAST)).value ?? null
     const usage = await $.session.usage({ breakdown: 'summary' })
     const { context, rateLimits, cost } = usage
     const ttl = step?.ttl ?? ttlMs('1h')
     const j = judge(now)
-    const out: string[] = [chips(step, now, ttl, usage, await read($, readings), j).map(c => c.text).join(SEP), '']
+    const out: string[] = [chips(step, now, ttl, usage, (await $.state.get(READINGS)).value ?? [], j).map(c => c.text).join(SEP), '']
     out.push(cacheDetail(step, now))
     const warnAt = warnTokens(context.window, cfg.ctxWarn, cfg.ctxWarnTokens)
     out.push(`上下文：${context.tokens !== undefined ? kTokens(context.tokens) : '–'} / ${kTokens(context.window)}（${context.percent ?? '–'}%）${warnAt ? `，${kTokens(warnAt)} 时提醒` : ''}`)
