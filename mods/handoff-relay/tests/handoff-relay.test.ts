@@ -5,11 +5,12 @@ import { ASKS_FOR_IT, headline, parseFile, pick, samePath } from '../hooks/core'
 
 type On = Parameters<Register>[0]
 const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
-const DIR = 'C:/tmp/claude-handoff'
-// The engine hands hooks Windows spellings; the fake disk keys on one form.
-const key = (p: string) => p.replace(/\\/g, '/')
+const DIR = '/tmp/claude-handoff'
+// The engine hands hooks the platform's spelling (backslashes and a drive on Windows);
+// the fake disk keys on one form, so the tests run the same on Windows and Linux.
+const key = (p: string) => p.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
 
-/** A fake disk: TEMP is C:/tmp, git says the repo has no root, files live in `disk`. */
+/** A fake disk: TEMP is /tmp, git says the repo has no root, files live in `disk`. */
 function world(on: On, disk: Map<string, { text: string; mtimeMs: number }>) {
   const clk = mock.clock(on, { now: 1_000_000 })
   mock.store(on)
@@ -18,8 +19,8 @@ function world(on: On, disk: Map<string, { text: string; mtimeMs: number }>) {
   on('ui.toast', () => ({ value: undefined }) as never)
   on('ui.render', () => null as never)
   on('session.end', ($, e) => ({ sessionId: e.sessionId }))
-  on('session.cwd', () => ({ value: 'C:\\repo' }))
-  on('env.get', ($, e) => ({ value: e.name === 'TEMP' ? 'C:/tmp' : undefined }) as never)
+  on('session.cwd', () => ({ value: '/repo' }))
+  on('env.get', ($, e) => ({ value: e.name === 'TEMP' ? '/tmp' : undefined }) as never)
   on('process.run', ($, e) => (e.argv.includes('--show-toplevel') ? { value: { exitCode: 128, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } : ok('main\n')) as never)
   on('fs.list', () => ({ value: [...disk].map(([p, f]) => ({ name: p.slice(p.lastIndexOf('/') + 1), kind: 'file', size: f.text.length, mtimeMs: f.mtimeMs, isLink: false })) }) as never)
   on('fs.read', ($, e) => {
@@ -48,9 +49,9 @@ test('/clear writes nothing itself; the handoff Claude wrote is offered and goes
     seen = e.context ?? []
     return { text: e.text, context: e.context }
   })
-  await $.session.start({ cwd: 'C:\\repo', surface: null, isInteractive: true })
+  await $.session.start({ cwd: '/repo', surface: null, isInteractive: true })
   // What the held /clear's turn wrote, before the second /clear.
-  disk.set(`${DIR}/repo-1000000.md`, { text: '---\ncwd: C:\\repo\nsource: auto\n---\n\n## 目标\n下一步：合并 PR #642', mtimeMs: 1_000_000 })
+  disk.set(`${DIR}/repo-1000000.md`, { text: '---\ncwd: /repo\nsource: auto\n---\n\n## 目标\n下一步：合并 PR #642', mtimeMs: 1_000_000 })
   await $.session.end({ reason: 'clear', sessionId: 's1', resume: { sessionId: 's1' } } as never)
   expect(disk.size).toBe(1)
   await $.prompt.submit({ text: '继续上次的工作', origin: { kind: 'composer' }, wait: false })
@@ -62,7 +63,7 @@ test('/clear writes nothing itself; the handoff Claude wrote is offered and goes
 test('exiting without a handoff saves nothing', async ($, on) => {
   const disk = new Map<string, { text: string; mtimeMs: number }>()
   world(on, disk)
-  await $.session.start({ cwd: 'C:\\repo', surface: null, isInteractive: true })
+  await $.session.start({ cwd: '/repo', surface: null, isInteractive: true })
   await $.session.end({ reason: 'prompt_input_exit', sessionId: 's1' } as never)
   expect(disk.size).toBe(0)
 })
@@ -78,7 +79,7 @@ function clearWorld(on: On, turns: number) {
 
 test('the first /clear of a working conversation asks for a handoff; the next goes through', async ($, on) => {
   const { seen, clk } = clearWorld(on, 5)
-  await $.session.start({ cwd: 'C:\\repo', surface: null, isInteractive: true })
+  await $.session.start({ cwd: '/repo', surface: null, isInteractive: true })
   const held = await $.command.run({ command: 'clear', args: '' } as never)
   await clk.advance(0)
   expect(held.text).toContain('handoff-relay')
@@ -86,7 +87,7 @@ test('the first /clear of a working conversation asks for a handoff; the next go
   expect(seen.submitted).toHaveLength(1)
   expect(seen.submitted[0]).toStartWith('收尾：我要 /clear 了')
   expect(seen.submitted[0]).toContain(`${DIR}/repo-1000000.md`)
-  expect(seen.submitted[0]).toContain('cwd: C:\\repo')
+  expect(seen.submitted[0]).toContain('cwd: /repo')
   await $.command.run({ command: 'clear', args: '' } as never)
   await clk.advance(0)
   expect(seen.cleared).toBe(1)
@@ -96,7 +97,7 @@ test('the first /clear of a working conversation asks for a handoff; the next go
 test('a /resume back to a handed-off conversation clears at once; new work there is held again', async ($, on) => {
   const { seen, clk } = clearWorld(on, 5)
   const clear = async () => (await $.command.run({ command: 'clear', args: '' } as never), await clk.advance(0))
-  await $.session.start({ cwd: 'C:\\repo', surface: null, isInteractive: true })
+  await $.session.start({ cwd: '/repo', surface: null, isInteractive: true })
   await clear()
   seen.turns = 6 // the handoff turn
   await clear()
@@ -114,19 +115,19 @@ test('a first prompt without the handoff hides the offer, unmarked', async ($, o
   world(on, disk)
   let seen: readonly string[] = []
   on('prompt.submit', ($, e) => ((seen = e.context ?? []), { text: e.text, context: e.context }))
-  disk.set(`${DIR}/repo-old.md`, { text: '---\ncwd: C:\\repo\nsource: auto\n---\n\n## 目标\n部署', mtimeMs: 900_000 })
-  await $.session.start({ cwd: 'C:\\repo', surface: null, isInteractive: true })
+  disk.set(`${DIR}/repo-old.md`, { text: '---\ncwd: /repo\nsource: auto\n---\n\n## 目标\n部署', mtimeMs: 900_000 })
+  await $.session.start({ cwd: '/repo', surface: null, isInteractive: true })
   await $.prompt.submit({ text: '看一下日志', origin: { kind: 'composer' }, wait: false })
   await $.prompt.submit({ text: '继续上次的工作', origin: { kind: 'composer' }, wait: false })
   expect(seen).toEqual([])
-  await $.session.start({ cwd: 'C:\\repo', surface: null, isInteractive: true })
+  await $.session.start({ cwd: '/repo', surface: null, isInteractive: true })
   await $.prompt.submit({ text: '继续上次的工作', origin: { kind: 'composer' }, wait: false })
   expect(seen.join('\n')).toContain('部署')
 })
 
 test('a short conversation clears at once', async ($, on) => {
   const { seen, clk } = clearWorld(on, 2)
-  await $.session.start({ cwd: 'C:\\repo', surface: null, isInteractive: true })
+  await $.session.start({ cwd: '/repo', surface: null, isInteractive: true })
   await $.command.run({ command: 'clear', args: '' } as never)
   await clk.advance(0)
   expect(seen.cleared).toBe(1)
