@@ -201,15 +201,13 @@ describe('session-meter', () => {
     expect(r.text).toContain('本会话费用：$4.20')
   })
 
-  test('auto TTL follows the documented order of controls', () => {
-    const ttl = (option: unknown, c: object, pct = 31) => ttlFor(option, c, [{ percentUsed: pct }])
-    expect(ttl('auto', {})).toEqual({ ttl: 3_600_000, source: '推断：额度内 1 小时' })
-    expect(ttl('auto', {}, 100).ttl).toBe(300_000)
-    expect(ttl('auto', { force5m: '1', env: '1h', setting: '1h' }).source).toBe('FORCE_PROMPT_CACHING_5M')
-    expect(ttl('auto', { env: '5m', setting: '1h' }).source).toBe('CLAUDE_CODE_PROMPT_CACHE_TTL')
-    expect(ttl('auto', { env: 'bogus', setting: '1h' }, 100)).toEqual({ ttl: 3_600_000, source: 'promptCacheTtl' })
-    expect(ttl('auto', { enable1h: '1' }, 100).ttl).toBe(3_600_000)
-    expect(ttl('5m', { setting: '1h' }).source).toBe('插件设置')
+  test('the TTL: the cacheTtl option, else inferred from the plan', () => {
+    const ttl = (option: unknown, pct = 31) => ttlFor(option, [{ percentUsed: pct }])
+    expect(ttl('auto')).toEqual({ ttl: 3_600_000, source: '推断：额度内 1 小时' })
+    expect(ttl('auto', 100).ttl).toBe(300_000)
+    expect(ttl('bogus', 100).ttl).toBe(300_000) // anything else counts as auto
+    expect(ttl('5m')).toEqual({ ttl: 300_000, source: '插件设置' })
+    expect(ttl('1h', 100)).toEqual({ ttl: 3_600_000, source: '插件设置' })
   })
 
   test('in overage a new write counts down 5m; the write made before keeps its 1h', async ($, on) => {
@@ -221,14 +219,6 @@ describe('session-meter', () => {
     await request($, 1)
     expect(await lastStatus($)).toContain('❄ 缓存 5:00')
   })
-
-  test('CLAUDE_CODE_PROMPT_CACHE_TTL=5m shortens the auto countdown', async ($, on) => {
-    const { seen, reading } = await start($, on)
-    reading.env = '5m'
-    await request($, 0)
-    expect(await lastStatus($)).toContain('❄ 缓存 5:00')
-  })
-
 
   test('a narrow band keeps the context and the cache, in at most two rows', () => {
     const usage = { startedAt: 0, rateLimits: [{ kind: 'five_hour', percentUsed: 31 }, { kind: 'seven_day', percentUsed: 92 }], context: { tokens: 92_000, window: 200_000, percent: 46 }, cost: { usd: 4.2 } } as any

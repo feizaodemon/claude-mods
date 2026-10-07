@@ -196,11 +196,7 @@ export const register: Register = (on, options) => {
       const at = await $.clock.now()
       const hit = hitPercent(result.usage)
       const { rateLimits } = await $.session.usage()
-      const { ttl, source } = ttlFor(cfg.ttlOption, {
-        force5m: await $.env.get('FORCE_PROMPT_CACHING_5M').catch(() => undefined),
-        env: await $.env.get('CLAUDE_CODE_PROMPT_CACHE_TTL').catch(() => undefined),
-        enable1h: await $.env.get('ENABLE_PROMPT_CACHING_1H').catch(() => undefined),
-      }, rateLimits)
+      const { ttl, source } = ttlFor(cfg.ttlOption, rateLimits)
       await $.state.set(LAST, { at, hitPercent: hit, ttl, ttlSource: source })
       await refresh($)
     }

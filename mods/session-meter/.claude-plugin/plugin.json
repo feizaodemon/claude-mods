@@ -1,6 +1,6 @@
 {
   "name": "session-meter",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "icon": "./.claude-plugin/icon.png",
   "author": { "name": "Xiaowei Rong" },
   "license": "MIT",
@@ -11,7 +11,7 @@
     "cacheTtl": {
       "type": "string",
       "title": "Prompt cache TTL",
-      "description": "auto, 1h or 5m: how long the prompt cache lives after the last main-thread response. auto: CLAUDE_CODE_PROMPT_CACHE_TTL if set, else 5m once a rate-limit window is spent (overage), else 1h. Anything else counts as auto.",
+      "description": "auto, 1h or 5m: how long the prompt cache lives after the last main-thread response. auto: 5m once a rate-limit window is spent (overage), else 1h. Anything else counts as auto. If you fix the TTL with an environment variable or promptCacheTtl, set this to match.",
       "default": "auto"
     },
     "contextWarnPercent": {

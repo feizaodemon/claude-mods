@@ -12,7 +12,7 @@ A band above the prompt that answers "what should I do now?":
 |---|---|
 | `☁ 多云 上下文 21% 210k/1M` | Context size, judged in tokens (default warning at 200k), not in share of a 1M window |
 | `约 6 轮到 200k` | Turns left before the warning, from the recent growth per turn |
-| `❄ 缓存 57:42` | Prompt cache countdown (1h / 5m, from the `cacheTtl` option, the cache environment variables, or your plan) |
+| `❄ 缓存 57:42` | Prompt cache countdown (1h / 5m, from the `cacheTtl` option, else inferred from your plan) |
 | `5小时 ▰▰▰▱▱ 67% 预计14:20用完 15:10重置` | Rate-limit windows, with a run-out forecast from the last 30 minutes of use |
 | `命中 40% 缓存可能失效` | Cache hit rate, only when it looks broken |
 | `已坐 47m` | Stand-up reminder: a pixel figure, a rotating tip and two buttons after 60 minutes |
@@ -38,7 +38,7 @@ Or clone this repo and list the folder in `CLAUDE_CODE_PLUGIN_DIRS` (`;`-separat
 
 | Option | Default | |
 |---|---|---|
-| `cacheTtl` | `auto` | `auto`, `1h` or `5m` |
+| `cacheTtl` | `auto` | `auto`, `1h` or `5m`; set it to match if you fix the TTL with an environment variable or `promptCacheTtl` |
 | `contextWarnPercent` | 80 | Warn at this share of the window; 0 off |
 | `contextWarnTokens` | 200000 | Warn at this many tokens, again at twice it; 0 off |
 | `standupMinutes` | 60 | Stand-up reminder interval; 10 minutes without a prompt counts as a break; 0 off |
@@ -57,7 +57,7 @@ The mod only reads: it never changes what other code sends, and it sends nothing
 | `ui.render` (`AbovePrompt`) | Draws the band, and the stand-up panel while it is due. What others draw there is kept. |
 | `command.run` (`meter`) | Prints every figure in full. |
 
-It reads three environment variables that set the prompt cache TTL (`FORCE_PROMPT_CACHING_5M`, `CLAUDE_CODE_PROMPT_CACHE_TTL`, `ENABLE_PROMPT_CACHING_1H`) so the countdown is right, and nothing else from the environment. Its sitting clock and late-night flag live in the plugin's own store.
+It reads nothing from the environment or `settings.json`: if you fix the cache TTL there, set `cacheTtl` to match. Its sitting clock and late-night flag live in the plugin's own store.
 
 ### Develop
 

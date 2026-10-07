@@ -8,23 +8,12 @@ export function ttlMs(option: unknown): number {
   return option === '5m' ? 5 * 60_000 : 60 * 60_000
 }
 
-// What can fix the main conversation's cache TTL, read when a response lands.
-export type TtlControls = { force5m?: string; env?: string; setting?: unknown; enable1h?: string }
-
-// The TTL a cache write gets now and why, in the order Claude Code applies its controls
-// (code.claude.com/docs/en/prompt-caching#choose-the-ttl-yourself), after this plugin's own option.
-// The last step is inferred: a subscription gets 1h within plan usage and 5m on usage credits, and a
-// rate-limit window at 100% stands for the latter.
-export function ttlFor(option: unknown, c: TtlControls, rateLimits: readonly { percentUsed: number }[]): { ttl: number; source: string } {
-  const pick = (v: unknown) => (v === '1h' || v === '5m' ? v : null)
-  const fixed = pick(option)
-  if (fixed) return { ttl: ttlMs(fixed), source: '插件设置' }
-  if (c.force5m === '1') return { ttl: ttlMs('5m'), source: 'FORCE_PROMPT_CACHING_5M' }
-  const env = pick(c.env)
-  if (env) return { ttl: ttlMs(env), source: 'CLAUDE_CODE_PROMPT_CACHE_TTL' }
-  const setting = pick(c.setting)
-  if (setting) return { ttl: ttlMs(setting), source: 'promptCacheTtl' }
-  if (c.enable1h === '1') return { ttl: ttlMs('1h'), source: 'ENABLE_PROMPT_CACHING_1H' }
+// The TTL a cache write gets now and why: this plugin's `cacheTtl` option when it is `1h` or `5m`,
+// else inferred from the plan. A subscription gets 1h within plan usage and 5m on usage credits,
+// and a rate-limit window at 100% stands for the latter. The mod reads nothing from the
+// environment or settings.json: whoever fixes the TTL there sets `cacheTtl` to match.
+export function ttlFor(option: unknown, rateLimits: readonly { percentUsed: number }[]): { ttl: number; source: string } {
+  if (option === '1h' || option === '5m') return { ttl: ttlMs(option), source: '插件设置' }
   return rateLimits.some(r => r.percentUsed >= 100)
     ? { ttl: ttlMs('5m'), source: '推断：额度已用满，按超额 5 分钟' }
     : { ttl: ttlMs('1h'), source: '推断：额度内 1 小时' }
