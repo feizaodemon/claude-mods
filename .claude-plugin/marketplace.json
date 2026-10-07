@@ -11,6 +11,11 @@
       "name": "session-meter",
       "source": "./mods/session-meter",
       "description": "A band above the prompt: context forecast and turns left, prompt cache countdown, rate limits with their pace, a cache hit warning, cost, and stand-up / late-night reminders. /meter shows the details."
+    },
+    {
+      "name": "handoff-relay",
+      "source": "./mods/handoff-relay",
+      "description": "Holds the first /clear of a working conversation so Claude writes a handoff first; saves a mechanical one on exit; offers the newest handoff for this folder on your next prompt."
     }
   ]
 }
