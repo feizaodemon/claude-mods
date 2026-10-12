@@ -136,8 +136,6 @@ export function cells(text: string): number {
   return n
 }
 
-export type { Chip }
-
 export function cacheChip(last: LastStep | null, now: number, ttl: number): Chip {
   if (last === null) return { key: 'cache', text: '❄ 缓存 –', short: '❄ –', dim: true, rank: 2 }
   const left = last.at + ttl - now
@@ -220,16 +218,20 @@ export function layout(all: readonly Chip[], columns: number, maxRows = 2): { ch
   }
 }
 
-// The whole meter as one plain line: /meter's first line, and what decides a redraw.
+// The whole meter as one plain line: /meter's first line.
 export function line(last: LastStep | null, now: number, ttl: number, usage: SessionUsage, history: readonly Reading[] = [], judge: Judge = DEFAULT_JUDGE): string {
   return chips(last, now, ttl, usage, history, judge).map(c => c.text).join(SEP)
 }
 
-// /meter's cache line. A step stored by an older version and kept across a reload has no TTL of its
-// own: it counts down 1h and names no source.
+// A step stored by an older version and kept across a reload has no TTL of its own: it counts down 1h.
+export function stepTtl(step: LastStep | null): number {
+  return step?.ttl ?? ttlMs('1h')
+}
+
+// /meter's cache line; an older step (see stepTtl) names no source.
 export function cacheDetail(step: LastStep | null, now: number): string {
   if (!step) return '提示缓存：主线程还没有响应'
-  const ttl = step.ttl ?? ttlMs('1h')
+  const ttl = stepTtl(step)
   const source = step.ttlSource ? `（${step.ttlSource}）` : ''
   const left = step.at + ttl - now
   return `提示缓存：上次主线程响应在 ${clock(now - step.at)} 前，TTL ${ttl / 60_000} 分钟${source}，${left > 0 ? `还剩 ${clock(left)}` : '已过期'}；命中率 ${step.hitPercent ?? '–'}%`

@@ -10,7 +10,7 @@ import type { View } from '../types'
 import type { Memo, Snapshot } from './alerts'
 import { EMPTY_MEMO, decideToasts } from './alerts'
 import type { Judge, Sample } from './format'
-import { SEP, WARN_MS, WINDOW_LABEL, cacheDetail, chips, exhaustsAt, hhmm, hhmmAt, hitPercent, kCount, layout, recentRate, ttlFor, ttlMs, warnTokens } from './format'
+import { SEP, WARN_MS, WINDOW_LABEL, cacheDetail, chips, exhaustsAt, hhmm, hhmmAt, hitPercent, kCount, layout, line, recentRate, stepTtl, ttlFor, warnTokens } from './format'
 import type { Standup } from './standup'
 import { IDLE_RESET_MS, advice, done, duration, figure, lateNight, nudgeKey, onActivity, parse, phase, snooze, standupChip } from './standup'
 
@@ -27,8 +27,10 @@ const LAST = { plugin: 'session-meter', key: 'last' } as const
 const READINGS = { plugin: 'session-meter', key: 'readings' } as const
 const VIEW = { plugin: 'session-meter', key: 'view' } as const
 
-// The options; set again on each (re)load.
-const cfg = { ttlOption: 'auto' as unknown, ctxWarn: 80, ctxWarnTokens: 200_000, standupMs: 60 * 60_000, bedtimeHour: 23 }
+// The options' defaults, as the manifest gives them; set again on each (re)load.
+const DEFAULTS = { contextWarnPercent: 80, contextWarnTokens: 200_000, standupMinutes: 60, bedtimeHour: 23 }
+const num = (v: unknown, d: number) => (typeof v === 'number' ? v : d)
+const cfg = { ttlOption: 'auto' as unknown, ctxWarn: DEFAULTS.contextWarnPercent, ctxWarnTokens: DEFAULTS.contextWarnTokens, standupMs: DEFAULTS.standupMinutes * 60_000, bedtimeHour: DEFAULTS.bedtimeHour }
 
 // What this module remembers between ticks; a reload starts it over.
 // runningSince: when the main conversation's current turn began (0: idle); standup / standupReadAt:
@@ -84,9 +86,9 @@ async function saveStandup($: EngineInterface, s: Standup) {
 // One second of the meter: the View the band draws, and the toasts now due.
 async function tick($: EngineInterface) {
   const now = await $.clock.now()
-  const step = (await $.state.get(LAST)).value ?? null
-  const usage = await $.session.usage()
-  const ttl = step?.ttl ?? ttlMs('1h')
+  const [last, usage, readings] = await Promise.all([$.state.get(LAST), $.session.usage(), $.state.get(READINGS)])
+  const step = last.value ?? null
+  const ttl = stepTtl(step)
   sample(now, usage)
   const j = judge(now)
 
@@ -96,8 +98,8 @@ async function tick($: EngineInterface) {
   const isDue = p?.phase === 'due'
 
   const next: View = {
-    chips: [...chips(step, now, ttl, usage, (await $.state.get(READINGS)).value ?? [], j), ...(upChip ? [upChip] : [])],
-    ...(isDue && p ? { standup: { tips: advice(s, p.sat, now), frame: Math.floor(now / 1000) % 2 } } : {}),
+    chips: [...chips(step, now, ttl, usage, readings.value ?? [], j), ...(upChip ? [upChip] : [])],
+    ...(isDue ? { standup: { tips: advice(s, p.sat, now), frame: Math.floor(now / 1000) % 2 } } : {}),
   }
   const key = JSON.stringify(next)
   if (key !== mem.viewKey) {
@@ -123,7 +125,7 @@ async function tick($: EngineInterface) {
       const at = r.percentUsed >= 50 ? exhaustsAt(r, now, j.rates?.[r.kind]) : undefined
       return at === undefined ? [] : [{ key: `${r.kind}:${r.resetsAt ?? ''}`, label: WINDOW_LABEL[r.kind] ?? r.kind, at: hhmmAt(at, now) ?? '', reset: hhmm(r.resetsAt, now) ?? undefined }]
     }),
-    standup: isDue && p ? { key: nudgeKey(s), sat: duration(p.sat) } : undefined,
+    standup: isDue ? { key: nudgeKey(s), sat: duration(p.sat) } : undefined,
     night: night ? { key: night, time: hhmmAt(now) ?? '' } : undefined,
   }
   const { toasts, memo } = decideToasts(snap, mem.memo)
@@ -163,10 +165,10 @@ const FAILING_CHIP = { key: 'failing', text: '⚠ meter 数据可能过期（/me
 
 export const register: Register = (on, options) => {
   cfg.ttlOption = options.cacheTtl
-  cfg.ctxWarn = typeof options.contextWarnPercent === 'number' ? options.contextWarnPercent : 80
-  cfg.ctxWarnTokens = typeof options.contextWarnTokens === 'number' ? options.contextWarnTokens : 200_000
-  cfg.standupMs = (typeof options.standupMinutes === 'number' ? options.standupMinutes : 60) * 60_000
-  cfg.bedtimeHour = typeof options.bedtimeHour === 'number' ? options.bedtimeHour : 23
+  cfg.ctxWarn = num(options.contextWarnPercent, DEFAULTS.contextWarnPercent)
+  cfg.ctxWarnTokens = num(options.contextWarnTokens, DEFAULTS.contextWarnTokens)
+  cfg.standupMs = num(options.standupMinutes, DEFAULTS.standupMinutes) * 60_000
+  cfg.bedtimeHour = num(options.bedtimeHour, DEFAULTS.bedtimeHour)
   mem = fresh()
 
   // Any prompt starts a main-thread turn; one the person sent is also the sign they are at the desk.
@@ -273,9 +275,8 @@ export const register: Register = (on, options) => {
     const step = (await $.state.get(LAST)).value ?? null
     const usage = await $.session.usage({ breakdown: 'summary' })
     const { context, rateLimits, cost } = usage
-    const ttl = step?.ttl ?? ttlMs('1h')
     const j = judge(now)
-    const out: string[] = [chips(step, now, ttl, usage, (await $.state.get(READINGS)).value ?? [], j).map(c => c.text).join(SEP), '']
+    const out: string[] = [line(step, now, stepTtl(step), usage, (await $.state.get(READINGS)).value ?? [], j), '']
     out.push(cacheDetail(step, now))
     const warnAt = warnTokens(context.window, cfg.ctxWarn, cfg.ctxWarnTokens)
     out.push(`上下文：${context.tokens !== undefined ? kCount(context.tokens) : '–'} / ${kCount(context.window)}（${context.percent ?? '–'}%）${warnAt ? `，${kCount(warnAt)} 时提醒` : ''}`)

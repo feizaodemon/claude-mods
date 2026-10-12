@@ -10,7 +10,7 @@ const USAGE = { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 9
 async function start($: Engine, on: On, percent = 46) {
   const seen = { toasts: [] as string[] }
   const clk = mock.clock(on, { now: 1_000_000 })
-  const reading = { percent, limit: 31, env: undefined as string | undefined, settings: {} as Record<string, unknown> }
+  const reading = { percent, limit: 31 }
   on('session.start', (_$, e) => ({ sessionId: 's', cwd: e.cwd }) as any)
   on('command.register', () => ({ value: undefined }) as any)
   on('session.usage', () => ({
@@ -29,8 +29,6 @@ async function start($: Engine, on: On, percent = 46) {
   on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'Box', props: {}, children: [] }) as any)
   on('ui.toast', (_$, e) => (seen.toasts.push(e.text), { value: undefined }) as any)
   on('session.end', (_$, e) => ({ sessionId: e.sessionId }) as any)
-  on('env.get', (_$, e: any) => ({ value: String(e.name ?? e) === 'CLAUDE_CODE_PROMPT_CACHE_TTL' ? reading.env : undefined }) as any)
-  on('settings.read', () => ({ value: reading.settings }) as any)
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' } as any)
   return { clk, seen, reading }
 }

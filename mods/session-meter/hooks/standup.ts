@@ -1,6 +1,6 @@
 // Stand-up reminder: how long the person has sat at Claude Code, kept in $.store so every open
 // session shares one clock. Ten minutes with no prompt counts as a break and starts it over.
-import type { Chip } from './format'
+import type { Chip } from '../types'
 
 const MINUTE = 60_000
 export const IDLE_RESET_MS = 10 * MINUTE // no prompt this long: they were away, the next prompt restarts the clock
@@ -30,7 +30,7 @@ export function parse(value: unknown, now: number): Standup {
 /** A new sitting after a break, counting the break toward today. */
 function afterBreak(s: Standup, now: number): Standup {
   const today = dayOf(now)
-  return { ...fresh(now), day: today, breaks: (s.day === today ? s.breaks : 0) + 1 }
+  return { ...fresh(now), breaks: (s.day === today ? s.breaks : 0) + 1 }
 }
 
 /** A prompt from the person: after a break (ten minutes without one) the clock starts over. */
@@ -91,7 +91,9 @@ export function halfBlocks(grid: readonly string[]): string[] {
   return out
 }
 
-export const figure = (frame: number): string[] => halfBlocks(FRAMES[frame % FRAMES.length] ?? FRAMES[0]!)
+// The frames never change: drawn once, not on every redraw.
+const FIGURES = FRAMES.map(halfBlocks)
+export const figure = (frame: number): string[] => FIGURES[frame % FIGURES.length] ?? FIGURES[0]!
 
 // One suggestion per sitting, in turn: the same sentence every hour soon goes unread.
 const TIPS = [
