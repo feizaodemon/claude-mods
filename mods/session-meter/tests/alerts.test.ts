@@ -4,7 +4,7 @@ import type { Snapshot } from '../hooks/alerts'
 import { EMPTY_MEMO, decideToasts } from '../hooks/alerts'
 import { hhmm } from '../hooks/format'
 
-const calm: Snapshot = { running: false, away: false, context: { tokens: 50_000, percent: 25, window: 200_000, warnAt: 160_000 }, pace: [] }
+const calm: Snapshot = { running: false, away: false, context: { tokens: 50_000 }, pace: [] }
 
 test('nothing to say on a calm snapshot', () => {
   expect(decideToasts(calm, EMPTY_MEMO).toasts).toEqual([])
@@ -25,16 +25,6 @@ test('the cache warning needs a costly context and someone at the desk', () => {
   expect(decideToasts({ ...soon, away: true }, EMPTY_MEMO).toasts).toEqual([])
   expect(decideToasts({ ...soon, context: { ...soon.context, tokens: 10_000 } }, EMPTY_MEMO).toasts).toEqual([])
   expect(decideToasts({ ...soon, running: true }, EMPTY_MEMO).toasts).toHaveLength(1) // the session's, not the person's
-})
-
-test('context warnings: once at the size, once at twice it, again after a drop', () => {
-  const ctx = (tokens: number): Snapshot => ({ ...calm, context: { tokens, percent: tokens / 10_000, window: 1_000_000, warnAt: 200_000 } })
-  const a = decideToasts(ctx(210_000), EMPTY_MEMO)
-  expect(a.toasts).toHaveLength(1)
-  const b = decideToasts(ctx(410_000), a.memo)
-  expect(b.toasts[0]).toContain('建议现在 /compact')
-  const dropped = decideToasts(ctx(50_000), b.memo)
-  expect(decideToasts(ctx(210_000), dropped.memo).toasts).toHaveLength(1)
 })
 
 test('a window running out is told once per reset', () => {

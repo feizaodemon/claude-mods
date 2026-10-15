@@ -65,17 +65,20 @@ const FORECAST = [
 ] as const
 export const forecast = (percent: number) => FORECAST.find(f => percent < f.upTo) ?? FORECAST[4]
 
-// The context size the warning fires at: `percent` of the window, capped at `capTokens`. What a
-// turn costs and how well the model attends follow the tokens, not the share of the window, so a
-// 1M window warns at the cap long before 80% of it. Undefined when both are off.
-export function warnTokens(window: number, percent: number, capTokens: number): number | undefined {
-  const byShare = percent > 0 ? (window * percent) / 100 : Infinity
-  const at = Math.min(byShare, capTokens > 0 ? capTokens : Infinity)
-  return Number.isFinite(at) && at > 0 ? at : undefined
-}
+// The auto-compact window Claude Code uses (`autoCompactWindow`, else the model's) and where
+// auto-compaction runs (absent when it is off), as the context breakdown reports them.
+export type Compact = { window: number; source: string; threshold?: number }
 
-// The forecast's scale: the warning sits at 80 on it, where the weather turns to storms.
-export const forecastPercent = (tokens: number, warnAt: number) => Math.round((tokens / warnAt) * 80)
+const FALLBACK_WINDOW = 400_000 // the scale when the breakdown cannot be read, at most the model's window
+
+// The window the context is measured against, its share of it, and where the turns left count to:
+// auto-compaction, else the full window. Claude Code compacts on its own, so nothing warns.
+export function contextScale(context: SessionUsage['context'], compact?: Compact): { window: number; percent?: number; target: number; compacts: boolean } {
+  const window = compact && compact.window > 0 ? compact.window : Math.min(FALLBACK_WINDOW, context.window || FALLBACK_WINDOW)
+  const percent = context.tokens !== undefined ? Math.round((context.tokens / window) * 100) : undefined
+  const compacts = compact?.threshold !== undefined
+  return { window, percent, target: compact?.threshold ?? window, compacts }
+}
 
 // How many more turns, at the recent average growth, until the context reaches `target` tokens.
 // Only growth counts: a /compact or /clear shrinks the context but says nothing about the pace.
@@ -144,21 +147,21 @@ export function cacheChip(last: LastStep | null, now: number, ttl: number): Chip
   return { key: 'cache', text: `❄ 缓存 ${clock(left)}${isSoon ? ' 快过期' : ''}`, short: `❄ ${clock(left)}`, color: isSoon ? 'yellow' : 'cyan', rank: 2 }
 }
 
-// What the chips are judged against: the context warning's size in tokens, and each rate-limit
+// What the chips are judged against: the auto-compact window when it is known, and each rate-limit
 // window's recent pace (percent per ms) where one is known.
-export type Judge = { warnPercent: number; warnCapTokens: number; rates?: Readonly<Record<string, number | undefined>> }
-export const DEFAULT_JUDGE: Judge = { warnPercent: 80, warnCapTokens: 200_000 }
+export type Judge = { compact?: Compact; rates?: Readonly<Record<string, number | undefined>> }
+export const DEFAULT_JUDGE: Judge = {}
 
 // Every part the engine has a figure for, in the order the band shows them.
 export function chips(last: LastStep | null, now: number, ttl: number, usage: SessionUsage, history: readonly Reading[] = [], judge: Judge = DEFAULT_JUDGE): Chip[] {
   const out: Chip[] = []
   const { context, rateLimits, cost } = usage
-  const warnAt = context.window ? warnTokens(context.window, judge.warnPercent, judge.warnCapTokens) : undefined
-  if (context.percent !== undefined && context.tokens !== undefined) {
-    const f = forecast(warnAt ? forecastPercent(context.tokens, warnAt) : context.percent)
+  const { window, percent, target, compacts } = contextScale(context, judge.compact)
+  if (percent !== undefined && context.tokens !== undefined) {
+    const f = forecast(percent)
     out.push({
       key: 'context', rank: 1, color: f.color,
-      text: `${f.icon} ${f.word} 上下文 ${context.percent}% ${kCount(context.tokens)}/${kCount(context.window)}`,
+      text: `${f.icon} ${f.word} 上下文 ${percent}% ${kCount(context.tokens)}/${kCount(window)}`,
       short: `${f.icon} ${kCount(context.tokens)}`,
     })
   }
@@ -174,9 +177,9 @@ export function chips(last: LastStep | null, now: number, ttl: number, usage: Se
       short: `${label} ${pct}%${runsOut ? '!' : ''}`,
     })
   }
-  // Turns until the context warning, in place of a sparkline that took reading.
-  const left = turnsLeft(history, warnAt)
-  if (left !== undefined && warnAt !== undefined) out.push({ key: 'turns', text: `约 ${left} 轮到 ${kCount(warnAt)}`, short: `${left}轮`, color: left <= 3 ? 'yellow' : undefined, dim: left > 3, rank: 5 })
+  // Turns until auto-compaction (or a full window), in place of a sparkline that took reading.
+  const left = turnsLeft(history, target)
+  if (left !== undefined) out.push({ key: 'turns', text: compacts ? `约 ${left} 轮后自动压缩` : `约 ${left} 轮到 ${kCount(target)}`, short: `${left}轮`, color: left <= 3 ? 'yellow' : undefined, dim: left > 3, rank: 5 })
   // The hit rate needs no action while the cache works; it shows only when it looks broken.
   if (last?.hitPercent != null && last.hitPercent < 70) out.push({ key: 'hit', text: `命中 ${last.hitPercent}% 缓存可能失效`, short: `命中${last.hitPercent}%`, color: 'yellow', rank: 4 })
   // A subscription's figure in API prices: informative, never a reason to act, so last to go.

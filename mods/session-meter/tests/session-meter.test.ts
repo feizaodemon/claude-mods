@@ -2,25 +2,36 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
-import { cacheDetail, cells, chips, clock, exhaustsAt, forecastPercent, hitPercent, kCount, layout, line, recentRate, ttlFor, turnsLeft, warnTokens } from '../hooks/format'
+import { cacheDetail, cells, chips, clock, contextScale, exhaustsAt, hitPercent, kCount, layout, line, recentRate, ttlFor, turnsLeft } from '../hooks/format'
 
 const USAGE = { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 900, cache_creation_input_tokens: 0, model: 'm' }
 
-// Stands for the engine: a usage reading, one model request per step, toasts captured.
-async function start($: Engine, on: On, percent = 46) {
-  const seen = { toasts: [] as string[] }
+// Stands for the engine: a usage reading, one model request per step, toasts captured. `compact`:
+// the auto-compact window a breakdown reports; absent, the breakdown is unreadable. `surfaces`:
+// where the session is shown; none for a `claude -p` run.
+async function start($: Engine, on: On, percent = 46, compact?: number, surfaces: string[] = ['terminal']) {
+  const seen = { toasts: [] as string[], breakdowns: 0 }
   const clk = mock.clock(on, { now: 1_000_000 })
   const reading = { percent, limit: 31 }
   on('session.start', (_$, e) => ({ sessionId: 's', cwd: e.cwd }) as any)
   on('command.register', () => ({ value: undefined }) as any)
-  on('session.usage', () => ({
-    value: {
-      startedAt: 0,
-      rateLimits: [{ kind: 'five_hour', percentUsed: reading.limit }],
-      context: { tokens: reading.percent * 2000, window: 200_000, percent: reading.percent },
-      cost: { usd: 4.2 },
-    },
-  }) as any)
+  on('session.surfaces', () => ({ value: surfaces }) as any)
+  on('session.attach', (_$, e) => ({ clientId: e.clientId }) as any)
+  on('session.usage', (_$, e: any) => {
+    const asked = e?.breakdown !== undefined
+    if (asked) seen.breakdowns += 1
+    const breakdown = asked && compact
+      ? { rawMaxTokens: compact, autocompactSource: 'settings', isAutoCompactEnabled: true, autoCompactThreshold: compact - 33_000, categories: [] }
+      : undefined
+    return {
+      value: {
+        startedAt: 0,
+        rateLimits: [{ kind: 'five_hour', percentUsed: reading.limit }],
+        context: { tokens: reading.percent * 2000, window: 200_000, percent: reading.percent, ...(breakdown ? { breakdown } : {}) },
+        cost: { usd: 4.2 },
+      },
+    } as any
+  })
   on('turn.step', async function* (_$, e) {
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: USAGE } as any
   })
@@ -121,13 +132,29 @@ describe('session-meter', () => {
     expect(seen.toasts.filter(t => t.startsWith('已经连续坐了'))).toHaveLength(1)
   })
 
-  test('a 1M window warns at the token cap, not at 80%', () => {
-    expect(warnTokens(1_000_000, 80, 200_000)).toBe(200_000)
-    expect(warnTokens(200_000, 80, 200_000)).toBe(160_000) // the share comes first
-    expect(warnTokens(1_000_000, 0, 0)).toBeUndefined()
-    expect(forecastPercent(79_000, 200_000)).toBe(32) // 79k of 1M reads as cloudy, not sunny 8%
-    const usage = { startedAt: 0, rateLimits: [], context: { tokens: 210_000, window: 1_000_000, percent: 21 } } as any
-    expect(chips(null, 0, 3_600_000, usage)[0]?.text).toContain('⛈ 雷雨 上下文 21% 210k/1M') // past the 200k warning
+  test('the auto-compact window sets the scale; unread, 400k at most the model window', () => {
+    const ctx = { tokens: 210_000, window: 1_000_000, percent: 21 }
+    const compact = { window: 400_000, source: 'settings', threshold: 367_000 }
+    expect(contextScale(ctx, compact)).toEqual({ window: 400_000, percent: 53, target: 367_000, compacts: true })
+    expect(contextScale(ctx, { ...compact, threshold: undefined })).toEqual({ window: 400_000, percent: 53, target: 400_000, compacts: false }) // auto-compact off
+    expect(contextScale(ctx)).toEqual({ window: 400_000, percent: 53, target: 400_000, compacts: false }) // unread: 400k
+    expect(contextScale({ tokens: 92_000, window: 200_000, percent: 46 }).window).toBe(200_000) // never past the model's
+    const usage = { startedAt: 0, rateLimits: [], context: ctx } as any
+    expect(chips(null, 0, 3_600_000, usage, [], { compact })[0]?.text).toBe('☂ 阵雨 上下文 53% 210k/400k')
+  })
+
+  test('reads the auto-compact window at start and per main turn, not every second', async ($, on) => {
+    on('turn.complete', () => ({ text: '' }) as any)
+    const { clk, seen } = await start($, on, 46, 100_000) // 92k of a 100k window
+    expect(await lastStatus($)).toContain('上下文 92% 92k/100k')
+    const atStart = seen.breakdowns
+    await clk.advance(5_000)
+    expect(seen.breakdowns).toBe(atStart)
+    await $.turn.complete({ turnId: 't1', durationMs: 1, reason: 'answer', answer: '', isAborted: false } as any)
+    expect(seen.breakdowns).toBe(atStart + 1)
+    const r = await $.command.run({ command: 'meter', args: '' } as any)
+    expect(r.text).toContain('上下文：92k / 100k（92%）')
+    expect(r.text).toContain('压缩窗口：100k（来源 settings），67k 时自动压缩；模型窗口 200k')
   })
 
   test('the recent pace wins over the window average', () => {
@@ -151,7 +178,7 @@ describe('session-meter', () => {
     expect(exhaustsAt({ ...r, resetsAt: '2026-10-07T16:50:00Z' }, now)).toBeUndefined() // too early to judge
     expect(exhaustsAt({ kind: 'spend_limit', percentUsed: 75 }, now)).toBeUndefined()
 
-    // +10k a turn, a /compact's drop ignored: from 50k to 80% of 200k is 11 turns.
+    // +10k a turn, a /compact's drop ignored: from 50k to 160k is 11 turns.
     expect(turnsLeft([{ tokens: 70_000 }, { tokens: 80_000 }, { tokens: 30_000 }, { tokens: 40_000 }, { tokens: 50_000 }], 160_000)).toBe(11)
     // From 100k: 6 turns.
     expect(turnsLeft([{ tokens: 80_000 }, { tokens: 90_000 }, { tokens: 100_000 }], 160_000)).toBe(6)
@@ -161,8 +188,10 @@ describe('session-meter', () => {
     const all = chips({ at: now, hitPercent: 40, ttl: 3_600_000 }, now, 3_600_000, usage, [{ tokens: 90_000 }, { tokens: 100_000 }])
     const text = all.map(c => c.text).join(' │ ')
     expect(text).toContain('预计')
-    expect(text).toContain('约 6 轮到 160k')
+    expect(text).toContain('约 10 轮到 200k') // the breakdown unread: to the full window
     expect(text).toContain('命中 40% 缓存可能失效')
+    const compact = { window: 200_000, source: 'settings', threshold: 167_000 }
+    expect(line(null, now, 3_600_000, usage, [{ tokens: 90_000 }, { tokens: 100_000 }], { compact })).toContain('约 7 轮后自动压缩')
   })
 
   test("a subagent's request leaves the main cache countdown alone", async ($, on) => {
@@ -173,15 +202,21 @@ describe('session-meter', () => {
     expect(await lastStatus($)).toContain('❄ 缓存 50:00')
   })
 
-  test('toasts once when the context passes the warning, again after it drops', async ($, on) => {
-    const { clk, seen, reading } = await start($, on, 85)
+  test('no context toast: Claude Code compacts on its own', async ($, on) => {
+    const { clk, seen } = await start($, on, 95, 200_000)
     await clk.advance(3_000)
-    expect(seen.toasts.filter(t => t.startsWith('上下文'))).toEqual(['上下文已到 170k（85%）：找个合适的节点手动 /compact'])
-    reading.percent = 30
-    await clk.advance(1_000)
-    reading.percent = 82
-    await clk.advance(1_000)
-    expect(seen.toasts.filter(t => t.startsWith('上下文'))).toHaveLength(2)
+    expect(await lastStatus($)).toContain('⚠ 该压缩了 上下文 95% 190k/200k')
+    expect(seen.toasts.filter(t => t.startsWith('上下文'))).toEqual([])
+  })
+
+  test('a session shown nowhere (claude -p) runs no tick until a client attaches', async ($, on) => {
+    const { clk, seen } = await start($, on, 46, 100_000, [])
+    await request($, 0)
+    await clk.advance(5_000)
+    expect(await lastStatus($)).toBe('')
+    expect(seen.breakdowns).toBe(0)
+    await $.session.attach({ surface: 'desktop', clientId: 'desktop:default' } as any)
+    expect(await lastStatus($)).toContain('上下文 92% 92k/100k')
   })
 
   test('the 5m option shortens the countdown', { options: { cacheTtl: '5m' } }, async ($, on) => {
@@ -197,6 +232,7 @@ describe('session-meter', () => {
     expect(r.text).toContain('TTL 60 分钟（推断：额度内 1 小时）')
     expect(r.text).toContain('额度 5小时：已用 31%')
     expect(r.text).toContain('本会话费用：$4.20')
+    expect(r.text).toContain('压缩窗口：读不到，按 200k 算；模型窗口 200k')
   })
 
   test('the TTL: the cacheTtl option, else inferred from the plan', () => {

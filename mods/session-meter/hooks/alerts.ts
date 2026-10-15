@@ -11,7 +11,7 @@ export type Snapshot = {
   away: boolean
   /** The last main-thread response's `at`, and how long its cache has left. */
   cache?: { at: number; left: number; warnMs: number }
-  context: { tokens?: number; percent?: number; window: number; warnAt?: number }
+  context: { tokens?: number }
   /** Windows the current pace runs out before their reset; `key` is the window and its reset. */
   pace: { key: string; label: string; at: string; reset?: string }[]
   /** The stand-up reminder while due; `key` is the sitting and snooze it is for. */
@@ -21,8 +21,8 @@ export type Snapshot = {
 }
 
 // What has been sent already. `nudged` and `night` are shared across sessions through $.store.
-export type Memo = { cacheFor: number; ctx: boolean; ctxStrong: boolean; pace: string[]; nudged: string; night: string }
-export const EMPTY_MEMO: Memo = { cacheFor: 0, ctx: false, ctxStrong: false, pace: [], nudged: '', night: '' }
+export type Memo = { cacheFor: number; pace: string[]; nudged: string; night: string }
+export const EMPTY_MEMO: Memo = { cacheFor: 0, pace: [], nudged: '', night: '' }
 
 export function decideToasts(s: Snapshot, m: Memo): { toasts: string[]; memo: Memo } {
   const toasts: string[] = []
@@ -34,20 +34,6 @@ export function decideToasts(s: Snapshot, m: Memo): { toasts: string[]; memo: Me
   if (s.cache && s.cache.at !== m.cacheFor && tokens >= CHEAP_REWRITE && !s.away && s.cache.left > 0 && s.cache.left <= s.cache.warnMs) {
     memo.cacheFor = s.cache.at
     toasts.push(`提示缓存还剩 ${clock(s.cache.left)} 过期：现在发下一条消息，否则要重新写入约 ${kCount(tokens)} token`)
-  }
-
-  // The context: at the warning size, and again at twice it; each again after it drops well below.
-  const { warnAt, window } = s.context
-  if (warnAt !== undefined && s.context.tokens !== undefined) {
-    const t = s.context.tokens
-    if (!m.ctx && t >= warnAt) {
-      memo.ctx = true
-      toasts.push(`上下文已到 ${kCount(t)}（${s.context.percent ?? '–'}%）：找个合适的节点手动 /compact`)
-    } else if (m.ctx && t < warnAt * 0.85) memo.ctx = false
-    if (!m.ctxStrong && t >= warnAt * 2 && warnAt * 2 <= window) {
-      memo.ctxStrong = true
-      toasts.push(`上下文已到 ${kCount(t)}：每轮都在重读这么多，建议现在 /compact，或写交接后 /clear`)
-    } else if (m.ctxStrong && t < warnAt * 1.7) memo.ctxStrong = false
   }
 
   // The rate limits: once per window and reset.

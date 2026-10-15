@@ -4,13 +4,13 @@
 //
 // Once a second the tick reads the engine, works out what the band shows (a View in $.state, which
 // redraws its readers when it changes) and which toasts are due (alerts.ts). Drawing only reads.
-import type { EngineInterface, Register, SessionUsage } from 'claude-code'
+import type { EngineInterface, Register, SessionContextBreakdown, SessionUsage, Timer } from 'claude-code'
 
 import type { View } from '../types'
 import type { Memo, Snapshot } from './alerts'
 import { EMPTY_MEMO, decideToasts } from './alerts'
-import type { Judge, Sample } from './format'
-import { SEP, WARN_MS, WINDOW_LABEL, cacheDetail, chips, exhaustsAt, hhmm, hhmmAt, hitPercent, kCount, layout, line, recentRate, stepTtl, ttlFor, warnTokens } from './format'
+import type { Compact, Judge, Sample } from './format'
+import { SEP, WARN_MS, WINDOW_LABEL, cacheDetail, chips, contextScale, exhaustsAt, hhmm, hhmmAt, hitPercent, kCount, layout, line, recentRate, stepTtl, ttlFor } from './format'
 import type { Standup } from './standup'
 import { IDLE_RESET_MS, advice, done, duration, figure, lateNight, nudgeKey, onActivity, parse, phase, snooze, standupChip } from './standup'
 
@@ -28,15 +28,17 @@ const READINGS = { plugin: 'session-meter', key: 'readings' } as const
 const VIEW = { plugin: 'session-meter', key: 'view' } as const
 
 // The options' defaults, as the manifest gives them; set again on each (re)load.
-const DEFAULTS = { contextWarnPercent: 80, contextWarnTokens: 200_000, standupMinutes: 60, bedtimeHour: 23 }
+const DEFAULTS = { standupMinutes: 60, bedtimeHour: 23 }
 const num = (v: unknown, d: number) => (typeof v === 'number' ? v : d)
-const cfg = { ttlOption: 'auto' as unknown, ctxWarn: DEFAULTS.contextWarnPercent, ctxWarnTokens: DEFAULTS.contextWarnTokens, standupMs: DEFAULTS.standupMinutes * 60_000, bedtimeHour: DEFAULTS.bedtimeHour }
+const cfg = { ttlOption: 'auto' as unknown, standupMs: DEFAULTS.standupMinutes * 60_000, bedtimeHour: DEFAULTS.bedtimeHour }
 
 // What this module remembers between ticks; a reload starts it over.
 // runningSince: when the main conversation's current turn began (0: idle); standup / standupReadAt:
 // this session's copy of the shared clock and when it was read; samples: each window's readings for
 // the recent pace, kept for the reset they belong to; nightChecked: the night whose shared flag was
-// read; viewKey: the View last written; failures / lastError: the tick's failures in a row.
+// read; compact: the auto-compact window, read once per main turn; ticker: the once-a-second tick,
+// run only in a session shown somewhere; viewKey: the View last written; failures / lastError: the
+// tick's failures in a row.
 const fresh = () => ({
   memo: { ...EMPTY_MEMO } as Memo,
   runningSince: 0,
@@ -45,11 +47,23 @@ const fresh = () => ({
   samples: {} as Record<string, { resetsAt: string; list: Sample[] }>,
   sampledAt: 0,
   nightChecked: '',
+  compact: undefined as Compact | undefined,
+  ticker: undefined as Timer | undefined,
   viewKey: '',
   failures: 0,
   lastError: '',
 })
 let mem = fresh()
+
+const compactOf = (b: SessionContextBreakdown | undefined): Compact | undefined =>
+  b && b.rawMaxTokens > 0 ? { window: b.rawMaxTokens, source: b.autocompactSource, threshold: b.isAutoCompactEnabled ? b.autoCompactThreshold : undefined } : undefined
+
+// The breakdown is estimated locally, but not worth a call a second: once per main turn and at start.
+async function readCompact($: EngineInterface) {
+  const usage = await $.session.usage({ breakdown: 'summary' }).catch(() => undefined)
+  if (usage) mem.compact = compactOf(usage.context.breakdown)
+  return usage
+}
 
 const isRunning = (now: number) => mem.runningSince > 0 && now - mem.runningSince < RUNNING_MAX_MS
 
@@ -67,7 +81,7 @@ function sample(now: number, usage: SessionUsage) {
 function judge(now: number): Judge {
   const rates: Record<string, number | undefined> = {}
   for (const [kind, held] of Object.entries(mem.samples)) rates[kind] = recentRate(held.list, now)
-  return { warnPercent: cfg.ctxWarn, warnCapTokens: cfg.ctxWarnTokens, rates }
+  return { compact: mem.compact, rates }
 }
 
 // Read from $.store at most every 15 s: the band redraws every second, the clock moves by minutes.
@@ -120,7 +134,7 @@ async function tick($: EngineInterface) {
     running: isRunning(now),
     away: now - s.lastActiveAt >= IDLE_RESET_MS,
     cache: step ? { at: step.at, left: step.at + ttl - now, warnMs: WARN_MS } : undefined,
-    context: { tokens: usage.context.tokens, percent: usage.context.percent, window: usage.context.window, warnAt: warnTokens(usage.context.window, cfg.ctxWarn, cfg.ctxWarnTokens) },
+    context: { tokens: usage.context.tokens },
     pace: usage.rateLimits.flatMap(r => {
       const at = r.percentUsed >= 50 ? exhaustsAt(r, now, j.rates?.[r.kind]) : undefined
       return at === undefined ? [] : [{ key: `${r.kind}:${r.resetsAt ?? ''}`, label: WINDOW_LABEL[r.kind] ?? r.kind, at: hhmmAt(at, now) ?? '', reset: hhmm(r.resetsAt, now) ?? undefined }]
@@ -136,8 +150,9 @@ async function tick($: EngineInterface) {
 }
 
 // The tick, with its failures counted rather than swallowed: after a few in a row the band says so
-// (its figures may be stale) and /meter names the last error.
+// (its figures may be stale) and /meter names the last error. A session shown nowhere skips it.
 async function refresh($: EngineInterface) {
+  if (!mem.ticker) return
   try {
     await tick($)
     if (mem.failures >= FAILING_AFTER) await setFailing($, false)
@@ -161,12 +176,24 @@ async function pressStandup($: EngineInterface, change: (s: Standup, t: number) 
   await refresh($)
 }
 
+// Each mod carries its own copy (ADR-0001): a session shown on no surface (`claude -p`, a scheduled
+// task) is headless, and draws no band nor sends a toast.
+async function isShown($: EngineInterface): Promise<boolean> {
+  return (await $.session.surfaces()).length > 0
+}
+
+// Starts the once-a-second tick, once: at start in a shown session, else when a client attaches.
+async function startTicking($: EngineInterface) {
+  if (mem.ticker) return
+  mem.ticker = $.clock.every(1000, () => void refresh($))
+  await readCompact($)
+  await refresh($)
+}
+
 const FAILING_CHIP = { key: 'failing', text: '⚠ meter 数据可能过期（/meter 看原因）', short: '⚠ meter', color: 'yellow', rank: 2 }
 
 export const register: Register = (on, options) => {
   cfg.ttlOption = options.cacheTtl
-  cfg.ctxWarn = num(options.contextWarnPercent, DEFAULTS.contextWarnPercent)
-  cfg.ctxWarnTokens = num(options.contextWarnTokens, DEFAULTS.contextWarnTokens)
   cfg.standupMs = num(options.standupMinutes, DEFAULTS.standupMinutes) * 60_000
   cfg.bedtimeHour = num(options.bedtimeHour, DEFAULTS.bedtimeHour)
   mem = fresh()
@@ -186,8 +213,13 @@ export const register: Register = (on, options) => {
     const r = await next(e)
     $.ui.status(undefined) // the band replaces the status line an older version wrote
     await $.command.register({ name: 'meter', description: '查看缓存、上下文、额度和费用明细' }).catch(() => {})
-    $.clock.every(1000, () => void refresh($))
-    await refresh($)
+    if (await isShown($)) await startTicking($)
+    return r
+  })
+
+  on('session.attach', async ($, e, next) => {
+    const r = await next(e)
+    await startTicking($)
     return r
   })
 
@@ -205,12 +237,13 @@ export const register: Register = (on, options) => {
     return result
   })
 
-  // The main conversation's turn is over; one reading of the context, for the turns left.
+  // The main conversation's turn is over; one reading of the context, for the turns left, and of
+  // the auto-compact window (a /model switch or a settings change moves it).
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
     if (!e.agentId) {
       mem.runningSince = 0
-      const { context } = await $.session.usage()
+      const { context } = (mem.ticker ? await readCompact($) : undefined) ?? (await $.session.usage())
       if (context.tokens !== undefined) {
         const held = (await $.state.get(READINGS)).value ?? []
         await $.state.set(READINGS, [...held, { tokens: context.tokens }].slice(-HISTORY))
@@ -223,6 +256,8 @@ export const register: Register = (on, options) => {
   on('session.end', async ($, e, next) => {
     await $.state.set(LAST, null) // /clear starts a fresh prefix
     await $.state.set(READINGS, [])
+    mem.ticker?.cancel() // the next session.start starts it again, if shown
+    mem.ticker = undefined
     mem.viewKey = ''
     return next(e)
   })
@@ -273,13 +308,17 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'meter' }, async $ => {
     const now = await $.clock.now()
     const step = (await $.state.get(LAST)).value ?? null
-    const usage = await $.session.usage({ breakdown: 'summary' })
+    const usage = (await readCompact($)) ?? (await $.session.usage())
     const { context, rateLimits, cost } = usage
     const j = judge(now)
     const out: string[] = [line(step, now, stepTtl(step), usage, (await $.state.get(READINGS)).value ?? [], j), '']
     out.push(cacheDetail(step, now))
-    const warnAt = warnTokens(context.window, cfg.ctxWarn, cfg.ctxWarnTokens)
-    out.push(`上下文：${context.tokens !== undefined ? kCount(context.tokens) : '–'} / ${kCount(context.window)}（${context.percent ?? '–'}%）${warnAt ? `，${kCount(warnAt)} 时提醒` : ''}`)
+    const { window, percent } = contextScale(context, mem.compact)
+    out.push(`上下文：${context.tokens !== undefined ? kCount(context.tokens) : '–'} / ${kCount(window)}（${percent ?? '–'}%）`)
+    const cw = mem.compact
+    out.push(cw
+      ? `压缩窗口：${kCount(cw.window)}（来源 ${cw.source}），${cw.threshold !== undefined ? `${kCount(cw.threshold)} 时自动压缩` : '自动压缩已关'}；模型窗口 ${kCount(context.window)}`
+      : `压缩窗口：读不到，按 ${kCount(window)} 算；模型窗口 ${kCount(context.window)}`)
     for (const c of context.breakdown?.categories ?? []) {
       if (c.tokens > 0) out.push(`  ${c.name}: ${kCount(c.tokens)}${c.isDeferred ? '（按需加载）' : ''}`)
     }
